@@ -2,13 +2,21 @@ using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using TMPro;
+
+public enum GameState
+{
+    RUNNING,
+    PAUSED,
+    START
+}
 
 public class AnnotationManager : MonoBehaviour
 {
     [Header("References")]
     [SerializeField] private Camera mainCamera;
-    [SerializeField] private Transform modelRoot;
-    [SerializeField] private Collider targetCollider;
+    [SerializeField] public Transform modelRoot;
+    [SerializeField] public Collider targetCollider;
     [SerializeField] private Canvas canvas;
     [SerializeField] private RectTransform annotationUIRoot;
     [SerializeField] private GameObject annotationWorldAnchorPrefab;
@@ -31,6 +39,9 @@ public class AnnotationManager : MonoBehaviour
     [Header("Click Settings")]
     [SerializeField] private float clickDragThreshold = 10f;
 
+    [Header("State Descriptor")]
+    [SerializeField] private TMP_Text stateText;
+
     private bool leftMousePressed = false;
     private Vector2 mouseDownPosition;
 
@@ -45,22 +56,49 @@ public class AnnotationManager : MonoBehaviour
     public Vector3 ModelCenterWorld =>
         hasCachedModelCenter ? modelRoot.TransformPoint(cachedModelCenterLocal) : modelRoot.position;
 
-    private void Awake()
+    public static AnnotationManager Inst { get; private set; }
+
+    private static GameState currentState;
+    public static GameState CurrentState
     {
-        if (autoComputeModelCenterOnAwake)
+        get => currentState;
+        set
         {
-            ComputeAndCacheModelCenterFromMeshes();
+            if (currentState == value) return;
+            currentState = value;
+            Inst.stateText.text = $"Game State: {CurrentState}";
         }
+    }
+
+    void Awake()
+    {
+        if(Inst!=null&&Inst!=this)
+        {
+            Destroy(gameObject);
+            return;
+        }
+        Inst = this;
+        CurrentState = GameState.START;
     }
 
     private void Update()
     {
+        if (CurrentState == GameState.START||CurrentState==GameState.PAUSED) return;
+
         if (Input.GetMouseButtonDown(0) && !EventSystem.current.IsPointerOverGameObject())
         {
             TryPlaceAnnotation();
         }
 
         UpdateAnnotationUIPositions();
+    }
+
+    public void ComputeCenters()
+    {
+        if (autoComputeModelCenterOnAwake)
+        {
+            ComputeAndCacheModelCenterFromMeshes();
+        }
     }
 
     public bool ComputeAndCacheModelCenterFromMeshes()

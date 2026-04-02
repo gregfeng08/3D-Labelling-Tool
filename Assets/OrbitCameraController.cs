@@ -1,4 +1,6 @@
 using UnityEngine;
+using TMPro;
+using UnityEngine.UI;
 
 public class OrbitCameraController : MonoBehaviour
 {
@@ -6,7 +8,7 @@ public class OrbitCameraController : MonoBehaviour
     [SerializeField] private Transform target;
 
     [Header("Orbit")]
-    [SerializeField] private float distance = 3f;
+    [SerializeField] public float distance = 3f;
     [SerializeField] private float xSpeed = 180f;
     [SerializeField] private float ySpeed = 120f;
     [SerializeField] private float yMinLimit = -80f;
@@ -14,11 +16,10 @@ public class OrbitCameraController : MonoBehaviour
 
     [Header("Zoom")]
     [SerializeField] private float zoomSpeed = 2f;
-    [SerializeField] private float minDistance = 0.5f;
-    [SerializeField] private float maxDistance = 10f;
+    [SerializeField] private float distanceMax = 2f;
+    [SerializeField] private Slider slider;
 
     [Header("Auto Center")]
-    [SerializeField] private AnnotationManager annotationManager;
     [SerializeField] private bool autoUseAnnotationManagerCenter = true;
 
     private float x;
@@ -31,15 +32,24 @@ public class OrbitCameraController : MonoBehaviour
         x = angles.y;
         y = angles.x;
 
-        if (target == null && annotationManager == null)
+        if (slider != null)
         {
-            Debug.LogWarning("OrbitCameraController: No target or AnnotationManager assigned.");
+            slider.minValue = 0f;
+            slider.maxValue = distance*distanceMax;
+            slider.value = distance;
+            slider.onValueChanged.AddListener(OnDistanceChanged);
         }
+    }
+
+    private void OnDistanceChanged(float value)
+    {
+        distance = slider.value;
     }
 
     private void LateUpdate()
     {
-        // Right mouse drag = orbit
+        if (AnnotationManager.CurrentState == GameState.START || AnnotationManager.CurrentState == GameState.PAUSED) return;
+        
         if (Input.GetMouseButton(1))
         {
             x += Input.GetAxis("Mouse X") * xSpeed * Time.deltaTime;
@@ -47,22 +57,14 @@ public class OrbitCameraController : MonoBehaviour
             y = ClampAngle(y, yMinLimit, yMaxLimit);
         }
 
-        // Scroll wheel = zoom
-        float scroll = Input.GetAxis("Mouse ScrollWheel");
-        if (Mathf.Abs(scroll) > 0.0001f)
-        {
-            distance -= scroll * zoomSpeed;
-            distance = Mathf.Clamp(distance, minDistance, maxDistance);
-        }
-
         Vector3 focusPoint;
 
-        if (autoUseAnnotationManagerCenter && annotationManager != null)
-            focusPoint = annotationManager.ModelCenterWorld + targetOffset;
+        if (autoUseAnnotationManagerCenter && AnnotationManager.Inst != null)
+            focusPoint = AnnotationManager.Inst.ModelCenterWorld + targetOffset;
         else if (target != null)
             focusPoint = target.position + targetOffset;
         else
-            focusPoint = transform.position;
+            focusPoint = new Vector3(0, 0, 0);
 
         Quaternion rotation = Quaternion.Euler(y, x, 0);
         Vector3 position = focusPoint - (rotation * Vector3.forward * distance);
