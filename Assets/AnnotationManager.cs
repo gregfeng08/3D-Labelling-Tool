@@ -467,13 +467,21 @@ public class AnnotationManager : MonoBehaviour
 
     private bool IsOccludedFromCamera(Vector3 anchorWorldPos)
     {
+        if (targetCollider == null) return false;
+
         Vector3 cameraPos = mainCamera.transform.position;
         Vector3 dir = anchorWorldPos - cameraPos;
         float dist = dir.magnitude;
 
         if (dist <= 0.0001f) return false;
 
-        if (Physics.Raycast(cameraPos, dir.normalized, out RaycastHit hit, dist, occlusionMask, QueryTriggerInteraction.Ignore))
+        // Raycast only against the model collider. Using Physics.Raycast here
+        // would hit the anchor ball's own SphereCollider first, causing a
+        // feedback loop: ball visible -> ray hits ball surface -> reports
+        // occluded -> ball disabled -> ray now reaches the model -> reports
+        // visible -> ball re-enabled -> repeat (flicker).
+        Ray ray = new Ray(cameraPos, dir.normalized);
+        if (targetCollider.Raycast(ray, out RaycastHit hit, dist))
         {
             float hitToAnchor = Vector3.Distance(hit.point, anchorWorldPos);
 
