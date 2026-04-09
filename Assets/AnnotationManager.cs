@@ -24,6 +24,7 @@ public class AnnotationManager : MonoBehaviour
 
     [Header("Config")]
     [SerializeField] private string modelId = "my_model";
+    public string ModelId { get => modelId; set => modelId = value; }
     [SerializeField] private float sidePadding = 220f;
     [SerializeField] private float verticalSpacing = 100f;
     [SerializeField] private float labelOutwardOffset = 120f;
@@ -415,6 +416,15 @@ public class AnnotationManager : MonoBehaviour
         File.WriteAllText(path, json);
         Debug.Log($"Exported annotations to: {path}");
     }
+
+    public void ExportToAbsolutePath(string absolutePath)
+    {
+        string json = ExportToJson();
+        File.WriteAllText(absolutePath, json);
+        Debug.Log($"Exported annotations to: {absolutePath}");
+    }
+
+    public int AnnotationCount => annotations.Count;
 
     public void ImportFromJson(string json)
     {
