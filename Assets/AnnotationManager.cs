@@ -31,6 +31,20 @@ public class AnnotationManager : MonoBehaviour
     [SerializeField] private LayerMask occlusionMask = ~0;
     [SerializeField] private float occlusionSurfaceTolerance = 0.03f;
 
+    [Header("Label Scaling")]
+    [Tooltip("Lower bound on how far labels are allowed to shrink.")]
+    [SerializeField] private float minLabelScale = 0.35f;
+    [Tooltip("Annotation count at which labels start shrinking.")]
+    [SerializeField] private int labelShrinkStartCount = 6;
+    [Tooltip("Pixel gap between the label edge and the end of its leader line.")]
+    [SerializeField] private float leaderLineGap = 8f;
+
+    [Header("World Anchor Scaling")]
+    [Tooltip("World anchor ball size as a fraction of the loaded model's bounding-box diagonal.")]
+    [SerializeField] private float anchorSizeFraction = 0.015f;
+    [Tooltip("Fallback anchor scale if model world size cannot be computed.")]
+    [SerializeField] private float anchorFallbackScale = 0.1f;
+
     [Header("Auto Center")]
     [SerializeField] private bool autoComputeModelCenterOnAwake = true;
 
@@ -53,6 +67,9 @@ public class AnnotationManager : MonoBehaviour
 
     private Vector3 cachedModelCenterLocal = Vector3.zero;
     private bool hasCachedModelCenter = false;
+
+    private float cachedModelWorldSize = 0f;
+    private bool hasCachedModelWorldSize = false;
 
     public Vector3 ModelCenterWorld =>
         hasCachedModelCenter ? modelRoot.TransformPoint(cachedModelCenterLocal) : modelRoot.position;
@@ -100,6 +117,27 @@ public class AnnotationManager : MonoBehaviour
         {
             ComputeAndCacheModelCenterFromMeshes();
         }
+        ComputeAndCacheModelWorldSize();
+    }
+
+    private void ComputeAndCacheModelWorldSize()
+    {
+        Renderer[] renderers = modelRoot.GetComponentsInChildren<Renderer>();
+        if (renderers.Length == 0)
+        {
+            hasCachedModelWorldSize = false;
+            cachedModelWorldSize = 0f;
+            return;
+        }
+
+        Bounds combined = renderers[0].bounds;
+        for (int i = 1; i < renderers.Length; i++)
+        {
+            combined.Encapsulate(renderers[i].bounds);
+        }
+
+        cachedModelWorldSize = combined.size.magnitude;
+        hasCachedModelWorldSize = cachedModelWorldSize > 0.0001f;
     }
 
     public bool ComputeAndCacheModelCenterFromMeshes()
@@ -270,6 +308,8 @@ public class AnnotationManager : MonoBehaviour
             anchor.transform.position = worldPosition;
         }
 
+        ApplyAnchorScale(anchor.transform);
+
         AnnotationLabelUI ui = Instantiate(annotationLabelPrefab, annotationUIRoot);
         ui.Setup(title, description);
         ui.gameObject.SetActive(true);
@@ -282,6 +322,39 @@ public class AnnotationManager : MonoBehaviour
         };
 
         annotations.Add(instance);
+    }
+
+    private void ApplyAnchorScale(Transform anchorTransform)
+    {
+        float target = hasCachedModelWorldSize
+            ? cachedModelWorldSize * anchorSizeFraction
+            : anchorFallbackScale;
+
+        // The anchor is parented under modelRoot, which carries a -1 X scale from
+        // the OBJ loader. That's a pure reflection so for a sphere the sign of X
+        // doesn't matter visually, but we set a positive uniform local scale for
+        // clarity. World radius ends up equal to `target`.
+        anchorTransform.localScale = new Vector3(target, target, target);
+    }
+
+    private float ComputeLabelScale(float modelScreenHeight, bool gotBounds)
+    {
+        float scale = 1f;
+
+        if (annotations.Count > labelShrinkStartCount)
+        {
+            scale *= Mathf.Clamp((float)labelShrinkStartCount / annotations.Count, minLabelScale, 1f);
+        }
+
+        if (gotBounds)
+        {
+            // Reference: label should be full-sized when the model fills roughly
+            // 70% of screen height; shrinks proportionally for smaller footprints.
+            float modelRatio = modelScreenHeight / (Screen.height * 0.7f);
+            scale *= Mathf.Clamp(modelRatio, minLabelScale, 1.2f);
+        }
+
+        return Mathf.Clamp(scale, minLabelScale, 1.2f);
     }
 
     private void UpdateAnnotationUIPositions()
@@ -298,15 +371,20 @@ public class AnnotationManager : MonoBehaviour
 
             Vector3 screenPos = mainCamera.WorldToScreenPoint(worldPos);
 
-            bool visible = IsScreenVisible(screenPos);
+            bool onScreen = IsScreenVisible(screenPos);
+            bool occluded = onScreen && IsOccludedFromCamera(worldPos);
 
-            if (!visible)
+            if (!onScreen || occluded)
             {
                 ann.ui.gameObject.SetActive(false);
+                if (ann.worldAnchor != null)
+                    ann.worldAnchor.SetActive(!occluded && onScreen);
                 continue;
             }
 
             ann.ui.gameObject.SetActive(true);
+            if (ann.worldAnchor != null)
+                ann.worldAnchor.SetActive(true);
 
             if (screenPos.x < Screen.width * 0.5f)
                 leftSide.Add(ann);
@@ -332,10 +410,15 @@ public class AnnotationManager : MonoBehaviour
         float modelMinX, modelMaxX, modelMinY, modelMaxY;
         bool gotBounds = TryGetModelScreenBounds(out modelMinX, out modelMaxX, out modelMinY, out modelMaxY);
 
+        float modelScreenHeight = gotBounds ? (modelMaxY - modelMinY) : 0f;
+        float labelScale = ComputeLabelScale(modelScreenHeight, gotBounds);
+        float scaledSpacing = verticalSpacing * labelScale;
+        float scaledOutwardOffset = labelOutwardOffset * Mathf.Lerp(0.7f, 1f, labelScale);
+
         float x;
         if (gotBounds)
         {
-            x = left ? modelMinX - labelOutwardOffset : modelMaxX + labelOutwardOffset;
+            x = left ? modelMinX - scaledOutwardOffset : modelMaxX + scaledOutwardOffset;
         }
         else
         {
@@ -351,10 +434,12 @@ public class AnnotationManager : MonoBehaviour
             var ann = sideAnnotations[i];
             RectTransform rt = ann.ui.RectTransform;
 
+            rt.localScale = new Vector3(labelScale, labelScale, 1f);
+
             Vector3 worldPos = modelRoot.TransformPoint(ann.data.localPosition.ToVector3());
             Vector3 screenPos = mainCamera.WorldToScreenPoint(worldPos);
 
-            float y = startY - i * verticalSpacing;
+            float y = startY - i * scaledSpacing;
             y = Mathf.Clamp(y, 60f, Screen.height - 60f);
 
             rt.position = new Vector3(x, y, 0f);
@@ -363,9 +448,15 @@ public class AnnotationManager : MonoBehaviour
             {
                 Vector2 anchorPoint = new Vector2(screenPos.x, screenPos.y);
 
+                // rt.rect.width is in local units; multiply by lossyScale to get the
+                // label's actual on-screen half-width, then add a small gap so the
+                // leader line terminates just outside the visible label edge.
+                float halfWidthScreen = rt.rect.width * 0.5f * rt.lossyScale.x;
+                float gap = leaderLineGap * labelScale;
+
                 float labelEdgeX = left
-                    ? rt.position.x + rt.rect.width * 0.5f
-                    : rt.position.x - rt.rect.width * 0.5f;
+                    ? rt.position.x + halfWidthScreen + gap
+                    : rt.position.x - halfWidthScreen - gap;
 
                 Vector2 labelPoint = new Vector2(labelEdgeX, rt.position.y);
 
