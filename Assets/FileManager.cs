@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
 using SimpleFileBrowser;
@@ -191,9 +192,36 @@ public class FileManager : MonoBehaviour
 
         try
         {
-            OBJExporter.Export(currentObj, objPath);
-            AnnotationManager.Inst.ExportToAbsolutePath(jsonPath);
-            Debug.Log($"FileManager: Exported {objPath} and {jsonPath}");
+            var mgr = AnnotationManager.Inst;
+
+            HashSet<Transform> exclude = mgr != null
+                ? mgr.CollectAnchorTransforms()
+                : new HashSet<Transform>();
+
+            Vector3 pivot = (mgr != null && mgr.HasCachedModelCenter)
+                ? mgr.ModelCenterLocal
+                : Vector3.zero;
+
+            float uniformScale = 1f;
+            if (mgr != null && OBJExporter.TryComputeRootLocalBounds(currentObj, exclude, out Bounds meshBounds))
+            {
+                float maxDim = Mathf.Max(meshBounds.size.x, Mathf.Max(meshBounds.size.y, meshBounds.size.z));
+                if (maxDim > 0.0001f)
+                    uniformScale = mgr.TargetExportDimension / maxDim;
+
+                Debug.Log($"FileManager: mesh bounds size={meshBounds.size}, maxDim={maxDim}, target={mgr.TargetExportDimension}, uniformScale={uniformScale}");
+            }
+            else
+            {
+                Debug.LogWarning("FileManager: failed to compute mesh bounds for export scale; falling back to 1.0.");
+            }
+
+            Quaternion orientation = mgr != null ? mgr.ExportOrientation : Quaternion.identity;
+
+            OBJExporter.Export(currentObj, objPath, pivot, orientation, uniformScale, exclude);
+            if (mgr != null)
+                mgr.ExportToAbsolutePath(jsonPath, pivot, orientation, uniformScale);
+            Debug.Log($"FileManager: Exported {objPath} and {jsonPath} (orientationEuler={orientation.eulerAngles})");
         }
         catch (System.Exception e)
         {

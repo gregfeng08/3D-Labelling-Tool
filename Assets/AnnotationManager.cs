@@ -48,6 +48,11 @@ public class AnnotationManager : MonoBehaviour
     [Header("Auto Center")]
     [SerializeField] private bool autoComputeModelCenterOnAwake = true;
 
+    [Header("Export")]
+    [Tooltip("The longest side of the exported (centered) mesh is rescaled to exactly this size, in meters — larger objects shrink, smaller ones grow. Set this to match the bounding box used in the main project so every imported scan lands at the same standard size.")]
+    [SerializeField] private float targetExportDimension = 1f;
+    public float TargetExportDimension => targetExportDimension;
+
     [Header("Prompt UI")]
     [SerializeField] private AnnotationPromptUI annotationPromptUI;
 
@@ -63,6 +68,9 @@ public class AnnotationManager : MonoBehaviour
     private Vector3 pendingWorldPoint;
     private bool hasPendingPoint = false;
 
+    private AnnotationInstance editingAnnotation;
+    private AnnotationInstance hoveredAnnotation;
+
     private readonly List<AnnotationInstance> annotations = new();
 
     private Vector3 cachedModelCenterLocal = Vector3.zero;
@@ -71,8 +79,16 @@ public class AnnotationManager : MonoBehaviour
     private float cachedModelWorldSize = 0f;
     private bool hasCachedModelWorldSize = false;
 
+    private Quaternion exportOrientation = Quaternion.identity;
+    public Quaternion ExportOrientation => exportOrientation;
+
     public Vector3 ModelCenterWorld =>
         hasCachedModelCenter ? modelRoot.TransformPoint(cachedModelCenterLocal) : modelRoot.position;
+
+    public Vector3 ModelCenterLocal =>
+        hasCachedModelCenter ? cachedModelCenterLocal : Vector3.zero;
+
+    public bool HasCachedModelCenter => hasCachedModelCenter;
 
     public static AnnotationManager Inst { get; private set; }
 
@@ -84,7 +100,8 @@ public class AnnotationManager : MonoBehaviour
         {
             if (currentState == value) return;
             currentState = value;
-            Inst.stateText.text = $"Game State: {CurrentState}";
+            if (Inst != null && Inst.stateText != null)
+                Inst.stateText.text = $"Game State: {CurrentState}";
         }
     }
 
@@ -108,16 +125,76 @@ public class AnnotationManager : MonoBehaviour
             TryPlaceAnnotation();
         }
 
+        bool promptOpen = hasPendingPoint || editingAnnotation != null;
+        if (hoveredAnnotation != null && !promptOpen)
+        {
+            if (Input.GetKeyDown(KeyCode.E))
+            {
+                BeginEditAnnotation(hoveredAnnotation);
+            }
+            else if (Input.GetKeyDown(KeyCode.R))
+            {
+                RemoveAnnotation(hoveredAnnotation);
+            }
+        }
+
         UpdateAnnotationUIPositions();
+    }
+
+    public void SetHoveredAnnotation(AnnotationInstance instance)
+    {
+        if (instance == null) return;
+        hoveredAnnotation = instance;
+    }
+
+    public void ClearHoveredAnnotation(AnnotationInstance instance)
+    {
+        if (hoveredAnnotation == instance)
+            hoveredAnnotation = null;
     }
 
     public void ComputeCenters()
     {
+        exportOrientation = Quaternion.identity;
+
         if (autoComputeModelCenterOnAwake)
         {
             ComputeAndCacheModelCenterFromMeshes();
         }
         ComputeAndCacheModelWorldSize();
+    }
+
+    public void SetFrontFromCamera()
+    {
+        if (modelRoot == null || mainCamera == null)
+        {
+            Debug.LogWarning("AnnotationManager.SetFrontFromCamera: modelRoot or mainCamera missing.");
+            return;
+        }
+
+        Vector3 center = ModelCenterWorld;
+        Vector3 worldDir = mainCamera.transform.position - center;
+
+        // Transform the camera direction into the exporter's root-local frame
+        // (includes the OBJ loader's -1 X scale). Yaw-only: project onto the
+        // root-local XZ plane so the model stays upright.
+        Vector3 localDir = modelRoot.worldToLocalMatrix.MultiplyVector(worldDir);
+        localDir.y = 0f;
+        if (localDir.sqrMagnitude < 0.0001f)
+        {
+            Debug.LogWarning("AnnotationManager.SetFrontFromCamera: camera is directly above/below the model; cannot derive a yaw.");
+            return;
+        }
+        localDir.Normalize();
+
+        exportOrientation = Quaternion.FromToRotation(localDir, Vector3.forward);
+        Debug.Log($"AnnotationManager: Set Front — export orientation euler = {exportOrientation.eulerAngles}");
+    }
+
+    public void ResetExportOrientation()
+    {
+        exportOrientation = Quaternion.identity;
+        Debug.Log("AnnotationManager: Export orientation reset.");
     }
 
     private void ComputeAndCacheModelWorldSize()
@@ -276,6 +353,15 @@ public class AnnotationManager : MonoBehaviour
 
     public void ConfirmPendingAnnotation(string title, string description)
     {
+        if (editingAnnotation != null)
+        {
+            editingAnnotation.data.title = title;
+            editingAnnotation.data.description = description;
+            editingAnnotation.ui.Setup(title, description);
+            editingAnnotation = null;
+            return;
+        }
+
         if (!hasPendingPoint) return;
 
         CreateAnnotation(pendingWorldPoint, title, description);
@@ -285,6 +371,7 @@ public class AnnotationManager : MonoBehaviour
     public void CancelPendingAnnotation()
     {
         hasPendingPoint = false;
+        editingAnnotation = null;
     }
 
     public void CreateAnnotation(Vector3 worldPosition, string title, string description)
@@ -321,7 +408,39 @@ public class AnnotationManager : MonoBehaviour
             ui = ui
         };
 
+        ui.Owner = instance;
+
         annotations.Add(instance);
+    }
+
+    public void BeginEditAnnotation(AnnotationInstance instance)
+    {
+        if (instance == null) return;
+
+        editingAnnotation = instance;
+        hasPendingPoint = false;
+
+        if (annotationPromptUI != null)
+        {
+            annotationPromptUI.OpenForEdit(instance.data.title, instance.data.description);
+        }
+        else
+        {
+            Debug.LogWarning("AnnotationManager: AnnotationPromptUI is not assigned.");
+        }
+    }
+
+    public void RemoveAnnotation(AnnotationInstance instance)
+    {
+        if (instance == null) return;
+
+        if (hoveredAnnotation == instance) hoveredAnnotation = null;
+        if (editingAnnotation == instance) editingAnnotation = null;
+
+        if (instance.worldAnchor != null) Destroy(instance.worldAnchor);
+        if (instance.ui != null) Destroy(instance.ui.gameObject);
+
+        annotations.Remove(instance);
     }
 
     private void ApplyAnchorScale(Transform anchorTransform)
@@ -379,6 +498,7 @@ public class AnnotationManager : MonoBehaviour
                 ann.ui.gameObject.SetActive(false);
                 if (ann.worldAnchor != null)
                     ann.worldAnchor.SetActive(!occluded && onScreen);
+                if (hoveredAnnotation == ann) hoveredAnnotation = null;
                 continue;
             }
 
@@ -495,6 +615,16 @@ public class AnnotationManager : MonoBehaviour
 
     public string ExportToJson()
     {
+        return ExportToJson(Vector3.zero, Quaternion.identity, 1f);
+    }
+
+    public string ExportToJson(Vector3 localPivotOffset, float uniformScale)
+    {
+        return ExportToJson(localPivotOffset, Quaternion.identity, uniformScale);
+    }
+
+    public string ExportToJson(Vector3 localPivotOffset, Quaternion localOrientation, float uniformScale)
+    {
         ModelAnnotationExport export = new ModelAnnotationExport
         {
             modelId = modelId
@@ -502,7 +632,15 @@ public class AnnotationManager : MonoBehaviour
 
         foreach (var ann in annotations)
         {
-            export.annotations.Add(ann.data);
+            Vector3 original = ann.data.localPosition.ToVector3();
+            Vector3 transformed = localOrientation * (original - localPivotOffset) * uniformScale;
+
+            export.annotations.Add(new AnnotationData
+            {
+                title = ann.data.title,
+                description = ann.data.description,
+                localPosition = new SerializableVector3(transformed)
+            });
         }
 
         return JsonUtility.ToJson(export, true);
@@ -518,9 +656,30 @@ public class AnnotationManager : MonoBehaviour
 
     public void ExportToAbsolutePath(string absolutePath)
     {
-        string json = ExportToJson();
+        ExportToAbsolutePath(absolutePath, Vector3.zero, Quaternion.identity, 1f);
+    }
+
+    public void ExportToAbsolutePath(string absolutePath, Vector3 localPivotOffset, float uniformScale)
+    {
+        ExportToAbsolutePath(absolutePath, localPivotOffset, Quaternion.identity, uniformScale);
+    }
+
+    public void ExportToAbsolutePath(string absolutePath, Vector3 localPivotOffset, Quaternion localOrientation, float uniformScale)
+    {
+        string json = ExportToJson(localPivotOffset, localOrientation, uniformScale);
         File.WriteAllText(absolutePath, json);
-        Debug.Log($"Exported annotations to: {absolutePath}");
+        Debug.Log($"Exported annotations to: {absolutePath} (pivot={localPivotOffset}, orientationEuler={localOrientation.eulerAngles}, scale={uniformScale})");
+    }
+
+    public HashSet<Transform> CollectAnchorTransforms()
+    {
+        HashSet<Transform> set = new HashSet<Transform>();
+        foreach (var ann in annotations)
+        {
+            if (ann.worldAnchor != null)
+                set.Add(ann.worldAnchor.transform);
+        }
+        return set;
     }
 
     public int AnnotationCount => annotations.Count;

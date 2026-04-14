@@ -17,6 +17,14 @@ public class AnnotationPromptUI : MonoBehaviour
         titleInput.ActivateInputField();
     }
 
+    public void OpenForEdit(string title, string description)
+    {
+        panelRoot.SetActive(true);
+        titleInput.text = title;
+        descriptionInput.text = description;
+        titleInput.ActivateInputField();
+    }
+
     public void Close()
     {
         panelRoot.SetActive(false);

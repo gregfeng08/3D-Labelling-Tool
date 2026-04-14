@@ -1,19 +1,34 @@
+using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using UnityEngine;
 
 namespace Dummiesman
 {
-    /// <summary>
-    /// Minimal OBJ writer that serializes a loaded model GameObject (as produced by
-    /// OBJLoader) back out to a Wavefront .obj file. Vertices are emitted in the
-    /// supplied root's local space, which matches the coordinate system the
-    /// Dummiesman loader uses on re-import (outer root carries a -1 X scale, child
-    /// transforms are identity), giving a round-trip-safe result.
-    /// </summary>
     public static class OBJExporter
     {
         public static void Export(GameObject root, string path)
+        {
+            Export(root, path, Vector3.zero, Quaternion.identity, 1f, null);
+        }
+
+        public static void Export(
+            GameObject root,
+            string path,
+            Vector3 localPivotOffset,
+            float uniformScale,
+            HashSet<Transform> excludeSubtreeRoots)
+        {
+            Export(root, path, localPivotOffset, Quaternion.identity, uniformScale, excludeSubtreeRoots);
+        }
+
+        public static void Export(
+            GameObject root,
+            string path,
+            Vector3 localPivotOffset,
+            Quaternion localOrientation,
+            float uniformScale,
+            HashSet<Transform> excludeSubtreeRoots)
         {
             if (root == null)
             {
@@ -35,6 +50,10 @@ namespace Dummiesman
             {
                 sw.NewLine = "\n";
                 sw.WriteLine("# Exported by ObjLabelTool");
+                sw.WriteLine(string.Format(ci, "# pivot offset: {0} {1} {2}", localPivotOffset.x, localPivotOffset.y, localPivotOffset.z));
+                sw.WriteLine(string.Format(ci, "# uniform scale: {0}", uniformScale));
+                Vector3 eul = localOrientation.eulerAngles;
+                sw.WriteLine(string.Format(ci, "# orientation euler: {0} {1} {2}", eul.x, eul.y, eul.z));
 
                 int offset = 0;
 
@@ -42,6 +61,7 @@ namespace Dummiesman
                 {
                     Mesh mesh = mf.sharedMesh;
                     if (mesh == null) continue;
+                    if (IsUnderExcludedRoot(mf.transform, excludeSubtreeRoots)) continue;
 
                     Vector3[] verts = mesh.vertices;
                     Vector3[] norms = mesh.normals;
@@ -57,7 +77,8 @@ namespace Dummiesman
 
                     for (int i = 0; i < verts.Length; i++)
                     {
-                        Vector3 v = meshToRootLocal.MultiplyPoint3x4(verts[i]);
+                        Vector3 vRootLocal = meshToRootLocal.MultiplyPoint3x4(verts[i]);
+                        Vector3 v = localOrientation * (vRootLocal - localPivotOffset) * uniformScale;
                         sw.WriteLine(string.Format(ci, "v {0} {1} {2}", v.x, v.y, v.z));
                     }
 
@@ -74,6 +95,7 @@ namespace Dummiesman
                         for (int i = 0; i < norms.Length; i++)
                         {
                             Vector3 n = meshToRootLocal.MultiplyVector(norms[i]).normalized;
+                            n = localOrientation * n;
                             sw.WriteLine(string.Format(ci, "vn {0} {1} {2}", n.x, n.y, n.z));
                         }
                     }
@@ -115,6 +137,63 @@ namespace Dummiesman
             }
 
             Debug.Log("OBJExporter: wrote " + path);
+        }
+
+        public static bool TryComputeRootLocalBounds(
+            GameObject root,
+            HashSet<Transform> excludeSubtreeRoots,
+            out Bounds bounds)
+        {
+            bounds = new Bounds();
+            if (root == null) return false;
+
+            MeshFilter[] filters = root.GetComponentsInChildren<MeshFilter>();
+            if (filters.Length == 0) return false;
+
+            Matrix4x4 rootWorldToLocal = root.transform.worldToLocalMatrix;
+
+            Vector3 min = new Vector3(float.PositiveInfinity, float.PositiveInfinity, float.PositiveInfinity);
+            Vector3 max = new Vector3(float.NegativeInfinity, float.NegativeInfinity, float.NegativeInfinity);
+            bool any = false;
+
+            foreach (MeshFilter mf in filters)
+            {
+                Mesh mesh = mf.sharedMesh;
+                if (mesh == null) continue;
+                if (IsUnderExcludedRoot(mf.transform, excludeSubtreeRoots)) continue;
+
+                Vector3[] verts = mesh.vertices;
+                Matrix4x4 meshToRootLocal = rootWorldToLocal * mf.transform.localToWorldMatrix;
+
+                for (int i = 0; i < verts.Length; i++)
+                {
+                    Vector3 p = meshToRootLocal.MultiplyPoint3x4(verts[i]);
+                    if (p.x < min.x) min.x = p.x;
+                    if (p.y < min.y) min.y = p.y;
+                    if (p.z < min.z) min.z = p.z;
+                    if (p.x > max.x) max.x = p.x;
+                    if (p.y > max.y) max.y = p.y;
+                    if (p.z > max.z) max.z = p.z;
+                    any = true;
+                }
+            }
+
+            if (!any) return false;
+
+            bounds = new Bounds((min + max) * 0.5f, max - min);
+            return true;
+        }
+
+        static bool IsUnderExcludedRoot(Transform t, HashSet<Transform> excludeSubtreeRoots)
+        {
+            if (excludeSubtreeRoots == null || excludeSubtreeRoots.Count == 0) return false;
+            Transform cur = t;
+            while (cur != null)
+            {
+                if (excludeSubtreeRoots.Contains(cur)) return true;
+                cur = cur.parent;
+            }
+            return false;
         }
     }
 }
