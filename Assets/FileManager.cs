@@ -49,25 +49,22 @@ public class FileManager : MonoBehaviour
                 Destroy(currentObj);
             }
 
-            MeshFilter mf = loadedObj.GetComponentInChildren<MeshFilter>();
-            MeshCollider mc = loadedObj.GetComponent<MeshCollider>();
-
-            if (mc == null)
-                mc = loadedObj.AddComponent<MeshCollider>();
-
-            if (mf != null)
-            {
-                mc.sharedMesh = mf.sharedMesh;
-            }
-
             currentObj = loadedObj;
             currentObjSourcePath = filePaths[0];
 
+            FixNegativeScale(loadedObj);
+            NormalizeModelScale(loadedObj);
+            SetupMeshColliders(loadedObj);
+
             AnnotationManager.Inst.modelRoot = currentObj.transform;
-            AnnotationManager.Inst.targetCollider = mc;
             AnnotationManager.Inst.ClearAnnotations();
+
             AnnotationManager.Inst.ComputeCenters();
             AnnotationManager.Inst.ModelId = Path.GetFileNameWithoutExtension(filePaths[0]);
+
+            OrbitCameraController cam = FindObjectOfType<OrbitCameraController>();
+            if (cam != null)
+                cam.ResetForModelSize(1f);
 
             AnnotationManager.CurrentState = GameState.RUNNING;
 
@@ -164,6 +161,86 @@ public class FileManager : MonoBehaviour
         }
 
         AnnotationManager.CurrentState = currentObj != null ? GameState.RUNNING : GameState.START;
+    }
+
+    static void FixNegativeScale(GameObject obj)
+    {
+        Vector3 s = obj.transform.localScale;
+        bool flipX = s.x < 0;
+        bool flipY = s.y < 0;
+        bool flipZ = s.z < 0;
+
+        if (!flipX && !flipY && !flipZ) return;
+
+        int flipCount = (flipX ? 1 : 0) + (flipY ? 1 : 0) + (flipZ ? 1 : 0);
+        bool reverseWinding = (flipCount % 2) == 1;
+
+        foreach (MeshFilter mf in obj.GetComponentsInChildren<MeshFilter>())
+        {
+            if (mf.sharedMesh == null) continue;
+
+            Mesh mesh = Object.Instantiate(mf.sharedMesh);
+            Vector3[] verts = mesh.vertices;
+            for (int i = 0; i < verts.Length; i++)
+            {
+                if (flipX) verts[i].x = -verts[i].x;
+                if (flipY) verts[i].y = -verts[i].y;
+                if (flipZ) verts[i].z = -verts[i].z;
+            }
+            mesh.vertices = verts;
+
+            if (reverseWinding)
+            {
+                for (int sub = 0; sub < mesh.subMeshCount; sub++)
+                {
+                    int[] tris = mesh.GetTriangles(sub);
+                    for (int i = 0; i < tris.Length; i += 3)
+                    {
+                        int tmp = tris[i];
+                        tris[i] = tris[i + 1];
+                        tris[i + 1] = tmp;
+                    }
+                    mesh.SetTriangles(tris, sub);
+                }
+            }
+
+            mesh.RecalculateNormals();
+            mesh.RecalculateBounds();
+            mf.sharedMesh = mesh;
+        }
+
+        obj.transform.localScale = new Vector3(Mathf.Abs(s.x), Mathf.Abs(s.y), Mathf.Abs(s.z));
+        Debug.Log($"FileManager: Fixed negative scale — original=({s.x},{s.y},{s.z})");
+    }
+
+    static void SetupMeshColliders(GameObject obj)
+    {
+        foreach (MeshFilter mf in obj.GetComponentsInChildren<MeshFilter>())
+        {
+            if (mf.sharedMesh == null) continue;
+            MeshCollider mc = mf.gameObject.GetComponent<MeshCollider>();
+            if (mc == null)
+                mc = mf.gameObject.AddComponent<MeshCollider>();
+            mc.sharedMesh = mf.sharedMesh;
+        }
+    }
+
+    static void NormalizeModelScale(GameObject obj)
+    {
+        Renderer[] renderers = obj.GetComponentsInChildren<Renderer>();
+        if (renderers.Length == 0) return;
+
+        Bounds combined = renderers[0].bounds;
+        for (int i = 1; i < renderers.Length; i++)
+            combined.Encapsulate(renderers[i].bounds);
+
+        float maxDim = Mathf.Max(combined.size.x, Mathf.Max(combined.size.y, combined.size.z));
+        if (maxDim < 0.0001f) return;
+
+        float scaleFactor = 1f / maxDim;
+        obj.transform.localScale *= scaleFactor;
+
+        Debug.Log($"FileManager: Normalized model scale — worldBounds={combined.size}, factor={scaleFactor}, newScale={obj.transform.localScale}");
     }
 
     void WriteExport(string chosenPath)

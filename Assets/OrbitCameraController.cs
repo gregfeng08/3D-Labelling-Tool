@@ -18,6 +18,9 @@ public class OrbitCameraController : MonoBehaviour
     [SerializeField] private float zoomSpeed = 2f;
     [SerializeField] private float distanceMax = 2f;
     [SerializeField] private Slider slider;
+    [SerializeField] private TMP_InputField distanceInput;
+    [SerializeField] private float distanceInputMin = 0f;
+    [SerializeField] private float distanceInputMax = 1000f;
 
     [Header("Auto Center")]
     [SerializeField] private bool autoUseAnnotationManagerCenter = true;
@@ -37,13 +40,52 @@ public class OrbitCameraController : MonoBehaviour
             slider.minValue = 0f;
             slider.maxValue = distance*distanceMax;
             slider.value = distance;
-            slider.onValueChanged.AddListener(OnDistanceChanged);
+            slider.onValueChanged.AddListener(OnSliderChanged);
+        }
+
+        if (distanceInput != null)
+        {
+            distanceInput.contentType = TMP_InputField.ContentType.DecimalNumber;
+            distanceInput.text = distance.ToString("0.###");
+            distanceInput.onEndEdit.AddListener(OnDistanceInputChanged);
         }
     }
 
-    private void OnDistanceChanged(float value)
+    private void OnSliderChanged(float value)
     {
-        distance = slider.value;
+        distance = value;
+        if (distanceInput != null && !distanceInput.isFocused)
+            distanceInput.text = distance.ToString("0.###");
+    }
+
+    private void OnDistanceInputChanged(string value)
+    {
+        if (!float.TryParse(value, out float parsed))
+        {
+            distanceInput.text = distance.ToString("0.###");
+            return;
+        }
+
+        distance = Mathf.Clamp(parsed, distanceInputMin, distanceInputMax);
+        distanceInput.text = distance.ToString("0.###");
+
+        if (slider != null)
+        {
+            if (distance > slider.maxValue) slider.maxValue = distance;
+            slider.SetValueWithoutNotify(distance);
+        }
+    }
+
+    public void ResetForModelSize(float size)
+    {
+        distance = size * 2f;
+        if (slider != null)
+        {
+            slider.maxValue = distance * distanceMax;
+            slider.SetValueWithoutNotify(distance);
+        }
+        if (distanceInput != null)
+            distanceInput.text = distance.ToString("0.###");
     }
 
     private void LateUpdate()

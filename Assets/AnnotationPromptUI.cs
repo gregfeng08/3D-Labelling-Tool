@@ -1,5 +1,6 @@
 using TMPro;
 using UnityEngine;
+using UnityEngine.UI;
 
 public class AnnotationPromptUI : MonoBehaviour
 {
@@ -8,6 +9,25 @@ public class AnnotationPromptUI : MonoBehaviour
     [SerializeField] private TMP_InputField titleInput;
     [SerializeField] private TMP_InputField descriptionInput;
     [SerializeField] private AnnotationManager annotationManager;
+
+    [Header("Buttons")]
+    [SerializeField] private Button confirmButton;
+    [SerializeField] private Button cancelButton;
+
+    private void Awake()
+    {
+        if (confirmButton != null)
+        {
+            confirmButton.onClick.RemoveListener(Confirm);
+            confirmButton.onClick.AddListener(Confirm);
+        }
+
+        if (cancelButton != null)
+        {
+            cancelButton.onClick.RemoveListener(Cancel);
+            cancelButton.onClick.AddListener(Cancel);
+        }
+    }
 
     public void Open()
     {
@@ -27,7 +47,13 @@ public class AnnotationPromptUI : MonoBehaviour
 
     public void Close()
     {
-        panelRoot.SetActive(false);
+        if (panelRoot != null)
+            panelRoot.SetActive(false);
+    }
+
+    public bool IsOpen()
+    {
+        return panelRoot != null && panelRoot.activeSelf;
     }
 
     public void Confirm()

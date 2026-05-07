@@ -82,6 +82,9 @@ public class AnnotationManager : MonoBehaviour
     private Quaternion exportOrientation = Quaternion.identity;
     public Quaternion ExportOrientation => exportOrientation;
 
+    [Header("Front Gizmo")]
+    [SerializeField] private BoundingBoxGizmo frontGizmo;
+
     public Vector3 ModelCenterWorld =>
         hasCachedModelCenter ? modelRoot.TransformPoint(cachedModelCenterLocal) : modelRoot.position;
 
@@ -120,21 +123,33 @@ public class AnnotationManager : MonoBehaviour
     {
         if (CurrentState == GameState.START||CurrentState==GameState.PAUSED) return;
 
-        if (Input.GetMouseButtonDown(0) && !EventSystem.current.IsPointerOverGameObject())
-        {
-            TryPlaceAnnotation();
-        }
-
         bool promptOpen = hasPendingPoint || editingAnnotation != null;
-        if (hoveredAnnotation != null && !promptOpen)
+
+        if (promptOpen)
         {
-            if (Input.GetKeyDown(KeyCode.E))
+            if (Input.GetKeyDown(KeyCode.Escape))
             {
-                BeginEditAnnotation(hoveredAnnotation);
+                CancelPendingAnnotation();
+                if (annotationPromptUI != null) annotationPromptUI.Close();
             }
-            else if (Input.GetKeyDown(KeyCode.R))
+        }
+        else
+        {
+            if (Input.GetMouseButtonDown(0) && !EventSystem.current.IsPointerOverGameObject())
             {
-                RemoveAnnotation(hoveredAnnotation);
+                TryPlaceAnnotation();
+            }
+
+            if (hoveredAnnotation != null)
+            {
+                if (Input.GetKeyDown(KeyCode.E))
+                {
+                    BeginEditAnnotation(hoveredAnnotation);
+                }
+                else if (Input.GetKeyDown(KeyCode.R))
+                {
+                    RemoveAnnotation(hoveredAnnotation);
+                }
             }
         }
 
@@ -162,38 +177,26 @@ public class AnnotationManager : MonoBehaviour
             ComputeAndCacheModelCenterFromMeshes();
         }
         ComputeAndCacheModelWorldSize();
+
+        if (frontGizmo != null)
+        {
+            frontGizmo.ComputeBounds();
+            frontGizmo.ResetRotation();
+        }
     }
 
-    public void SetFrontFromCamera()
+    public void SetExportOrientation(Quaternion q)
     {
-        if (modelRoot == null || mainCamera == null)
-        {
-            Debug.LogWarning("AnnotationManager.SetFrontFromCamera: modelRoot or mainCamera missing.");
-            return;
-        }
-
-        Vector3 center = ModelCenterWorld;
-        Vector3 worldDir = mainCamera.transform.position - center;
-
-        // Transform the camera direction into the exporter's root-local frame
-        // (includes the OBJ loader's -1 X scale). Yaw-only: project onto the
-        // root-local XZ plane so the model stays upright.
-        Vector3 localDir = modelRoot.worldToLocalMatrix.MultiplyVector(worldDir);
-        localDir.y = 0f;
-        if (localDir.sqrMagnitude < 0.0001f)
-        {
-            Debug.LogWarning("AnnotationManager.SetFrontFromCamera: camera is directly above/below the model; cannot derive a yaw.");
-            return;
-        }
-        localDir.Normalize();
-
-        exportOrientation = Quaternion.FromToRotation(localDir, Vector3.forward);
-        Debug.Log($"AnnotationManager: Set Front — export orientation euler = {exportOrientation.eulerAngles}");
+        exportOrientation = q;
     }
+
+    public void SetFrontFromCamera() { }
 
     public void ResetExportOrientation()
     {
         exportOrientation = Quaternion.identity;
+        if (frontGizmo != null)
+            frontGizmo.ResetRotation();
         Debug.Log("AnnotationManager: Export orientation reset.");
     }
 
@@ -331,11 +334,30 @@ public class AnnotationManager : MonoBehaviour
         return foundAnyVisiblePoint;
     }
 
+    private bool RaycastModel(Ray ray, out RaycastHit closestHit, float maxDist)
+    {
+        closestHit = default;
+        if (modelRoot == null) return false;
+
+        float best = maxDist;
+        bool found = false;
+        foreach (var mc in modelRoot.GetComponentsInChildren<MeshCollider>())
+        {
+            if (mc.Raycast(ray, out RaycastHit h, best))
+            {
+                best = h.distance;
+                closestHit = h;
+                found = true;
+            }
+        }
+        return found;
+    }
+
     private void TryPlaceAnnotation()
     {
         Ray ray = mainCamera.ScreenPointToRay(Input.mousePosition);
 
-        if (targetCollider.Raycast(ray, out RaycastHit hit, 1000f))
+        if (RaycastModel(ray, out RaycastHit hit, 1000f))
         {
             pendingWorldPoint = hit.point;
             hasPendingPoint = true;
@@ -587,7 +609,7 @@ public class AnnotationManager : MonoBehaviour
 
     private bool IsOccludedFromCamera(Vector3 anchorWorldPos)
     {
-        if (targetCollider == null) return false;
+        if (modelRoot == null) return false;
 
         Vector3 cameraPos = mainCamera.transform.position;
         Vector3 dir = anchorWorldPos - cameraPos;
@@ -595,18 +617,10 @@ public class AnnotationManager : MonoBehaviour
 
         if (dist <= 0.0001f) return false;
 
-        // Raycast only against the model collider. Using Physics.Raycast here
-        // would hit the anchor ball's own SphereCollider first, causing a
-        // feedback loop: ball visible -> ray hits ball surface -> reports
-        // occluded -> ball disabled -> ray now reaches the model -> reports
-        // visible -> ball re-enabled -> repeat (flicker).
         Ray ray = new Ray(cameraPos, dir.normalized);
-        if (targetCollider.Raycast(ray, out RaycastHit hit, dist))
+        if (RaycastModel(ray, out RaycastHit hit, dist))
         {
             float hitToAnchor = Vector3.Distance(hit.point, anchorWorldPos);
-
-            // If the ray hits the same surface point (or extremely close), treat it as visible.
-            // If it hits significantly earlier, the mesh is blocking it.
             return hitToAnchor > occlusionSurfaceTolerance;
         }
 
