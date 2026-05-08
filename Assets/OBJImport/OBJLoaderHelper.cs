@@ -75,9 +75,17 @@ namespace Dummiesman
             return (isNegative) ? -result : result;
         }
 
+        public static Shader FindShaderSafe()
+        {
+            Shader s = Shader.Find("Standard (Specular setup)");
+            if (s == null) s = Shader.Find("Standard");
+            if (s == null) s = Shader.Find("Diffuse");
+            return s;
+        }
+
         public static Material CreateNullMaterial()
         {
-            return new Material(Shader.Find("Standard (Specular setup)"));
+            return new Material(FindShaderSafe());
         }
 
         public static Vector3 VectorFromStrArray(string[] cmps)

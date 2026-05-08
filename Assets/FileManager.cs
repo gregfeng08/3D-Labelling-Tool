@@ -39,36 +39,44 @@ public class FileManager : MonoBehaviour
     {
         if(filePaths.Length>0)
         {
-            Debug.Log($"Selected File:{filePaths[0]}");
-            Debug.Log("Loading File...");
-
-            GameObject loadedObj = new OBJLoader().Load(filePaths[0]);
-            if(currentObj!=null)
+            try
             {
-                Debug.Log($"Attempting to Destroy:{currentObj.name}");
-                Destroy(currentObj);
+                Debug.Log($"Selected File:{filePaths[0]}");
+                Debug.Log("Loading File...");
+
+                GameObject loadedObj = new OBJLoader().Load(filePaths[0]);
+                if(currentObj!=null)
+                {
+                    Debug.Log($"Attempting to Destroy:{currentObj.name}");
+                    Destroy(currentObj);
+                }
+
+                currentObj = loadedObj;
+                currentObjSourcePath = filePaths[0];
+
+                FixNegativeScale(loadedObj);
+                NormalizeModelScale(loadedObj);
+                SetupMeshColliders(loadedObj);
+
+                AnnotationManager.Inst.modelRoot = currentObj.transform;
+                AnnotationManager.Inst.ClearAnnotations();
+
+                AnnotationManager.Inst.ComputeCenters();
+                AnnotationManager.Inst.ModelId = Path.GetFileNameWithoutExtension(filePaths[0]);
+
+                OrbitCameraController cam = FindObjectOfType<OrbitCameraController>();
+                if (cam != null)
+                    cam.ResetForModelSize(1f);
+
+                AnnotationManager.CurrentState = GameState.RUNNING;
+
+                Debug.Log("Object Created");
             }
-
-            currentObj = loadedObj;
-            currentObjSourcePath = filePaths[0];
-
-            FixNegativeScale(loadedObj);
-            NormalizeModelScale(loadedObj);
-            SetupMeshColliders(loadedObj);
-
-            AnnotationManager.Inst.modelRoot = currentObj.transform;
-            AnnotationManager.Inst.ClearAnnotations();
-
-            AnnotationManager.Inst.ComputeCenters();
-            AnnotationManager.Inst.ModelId = Path.GetFileNameWithoutExtension(filePaths[0]);
-
-            OrbitCameraController cam = FindObjectOfType<OrbitCameraController>();
-            if (cam != null)
-                cam.ResetForModelSize(1f);
-
-            AnnotationManager.CurrentState = GameState.RUNNING;
-
-            Debug.Log("Object Created");
+            catch (System.Exception e)
+            {
+                Debug.LogError($"FileManager: Failed to load OBJ - {e.Message}\n{e.StackTrace}");
+                AnnotationManager.CurrentState = currentObj != null ? GameState.RUNNING : GameState.START;
+            }
         }
     }
 
