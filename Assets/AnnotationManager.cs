@@ -568,7 +568,7 @@ public class AnnotationManager : MonoBehaviour
             Vector3 screenPos = mainCamera.WorldToScreenPoint(worldPos);
 
             bool onScreen = IsScreenVisible(screenPos);
-            bool occluded = onScreen && IsOccludedFromCamera(worldPos);
+            bool occluded = onScreen && IsOccludedFromCamera(worldPos, ann.worldAnchor.transform);
 
             if (!onScreen || occluded)
             {
@@ -662,22 +662,41 @@ public class AnnotationManager : MonoBehaviour
         }
     }
 
-    private bool IsOccludedFromCamera(Vector3 anchorWorldPos)
+    private bool IsOccludedFromCamera(Vector3 anchorWorldPos, Transform anchorTransform)
     {
         if (modelRoot == null) return false;
 
         Vector3 cameraPos = mainCamera.transform.position;
-        Vector3 dir = anchorWorldPos - cameraPos;
-        float dist = dir.magnitude;
 
+        if (!IsPointOccluded(cameraPos, anchorWorldPos))
+            return false;
+
+        float worldRadius = 0.5f * Mathf.Abs(anchorTransform.lossyScale.x) * 0.85f;
+
+        Vector3 toCamera = (cameraPos - anchorWorldPos).normalized;
+        Vector3 right = Vector3.Cross(toCamera, Vector3.up);
+        if (right.sqrMagnitude < 0.0001f)
+            right = Vector3.Cross(toCamera, Vector3.forward);
+        right = right.normalized;
+        Vector3 up = Vector3.Cross(right, toCamera).normalized;
+
+        if (!IsPointOccluded(cameraPos, anchorWorldPos + right * worldRadius)) return false;
+        if (!IsPointOccluded(cameraPos, anchorWorldPos - right * worldRadius)) return false;
+        if (!IsPointOccluded(cameraPos, anchorWorldPos + up * worldRadius)) return false;
+        if (!IsPointOccluded(cameraPos, anchorWorldPos - up * worldRadius)) return false;
+
+        return true;
+    }
+
+    private bool IsPointOccluded(Vector3 cameraPos, Vector3 targetPos)
+    {
+        Vector3 dir = targetPos - cameraPos;
+        float dist = dir.magnitude;
         if (dist <= 0.0001f) return false;
 
         Ray ray = new Ray(cameraPos, dir.normalized);
         if (RaycastModel(ray, out RaycastHit hit, dist))
-        {
-            float hitToAnchor = Vector3.Distance(hit.point, anchorWorldPos);
-            return hitToAnchor > occlusionSurfaceTolerance;
-        }
+            return Vector3.Distance(hit.point, targetPos) > occlusionSurfaceTolerance;
 
         return false;
     }
