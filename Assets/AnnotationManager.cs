@@ -71,6 +71,8 @@ public class AnnotationManager : MonoBehaviour
     private AnnotationInstance editingAnnotation;
     private AnnotationInstance hoveredAnnotation;
 
+    private GameObject hoverPreview;
+
     private readonly List<AnnotationInstance> annotations = new();
 
     private Vector3 cachedModelCenterLocal = Vector3.zero;
@@ -117,6 +119,58 @@ public class AnnotationManager : MonoBehaviour
         }
         Inst = this;
         CurrentState = GameState.START;
+        CreateHoverPreview();
+    }
+
+    private void CreateHoverPreview()
+    {
+        if (annotationWorldAnchorPrefab == null) return;
+
+        hoverPreview = Instantiate(annotationWorldAnchorPrefab);
+        hoverPreview.name = "HoverPreview";
+        hoverPreview.SetActive(false);
+
+        var col = hoverPreview.GetComponent<Collider>();
+        if (col != null) Destroy(col);
+
+        var renderer = hoverPreview.GetComponent<Renderer>();
+        if (renderer != null)
+        {
+            Material mat = new Material(renderer.sharedMaterial);
+            if (mat.HasProperty("_Color"))
+            {
+                Color c = mat.color;
+                c.a = 0.35f;
+                mat.color = c;
+            }
+            renderer.material = mat;
+        }
+    }
+
+    private void UpdateHoverPreview()
+    {
+        if (hoverPreview == null) return;
+
+        bool promptOpen = hasPendingPoint || editingAnnotation != null;
+        if (CurrentState != GameState.RUNNING || promptOpen ||
+            EventSystem.current.IsPointerOverGameObject())
+        {
+            hoverPreview.SetActive(false);
+            return;
+        }
+
+        Ray ray = mainCamera.ScreenPointToRay(Input.mousePosition);
+        if (RaycastModel(ray, out RaycastHit hit, 1000f))
+        {
+            hoverPreview.SetActive(true);
+            hoverPreview.transform.SetParent(modelRoot);
+            hoverPreview.transform.position = hit.point;
+            ApplyAnchorScale(hoverPreview.transform);
+        }
+        else
+        {
+            hoverPreview.SetActive(false);
+        }
     }
 
     private void Update()
@@ -153,6 +207,7 @@ public class AnnotationManager : MonoBehaviour
             }
         }
 
+        UpdateHoverPreview();
         UpdateAnnotationUIPositions();
     }
 
