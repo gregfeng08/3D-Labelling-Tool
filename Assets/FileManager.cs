@@ -221,6 +221,8 @@ public class FileManager : MonoBehaviour
             MeshCollider mc = mf.gameObject.GetComponent<MeshCollider>();
             if (mc == null)
                 mc = mf.gameObject.AddComponent<MeshCollider>();
+            mc.cookingOptions = MeshColliderCookingOptions.CookForFasterSimulation
+                              | MeshColliderCookingOptions.UseFastMidphase;
             mc.sharedMesh = mf.sharedMesh;
         }
     }
