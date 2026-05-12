@@ -165,7 +165,7 @@ public class BoundingBoxGizmo : MonoBehaviour
                 ((i & 2) == 0) ? -he.y : he.y,
                 ((i & 4) == 0) ? -he.z : he.z
             );
-            Vector3 rotated = center + boxRotation * orig;
+            Vector3 rotated = boxRotation * (center + orig);
             min = Vector3.Min(min, rotated);
             max = Vector3.Max(max, rotated);
         }
